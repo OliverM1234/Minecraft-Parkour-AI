@@ -1,0 +1,22 @@
+# Local virtual environment files & symlinks
+bin/
+include/
+lib/
+lib64
+pyvenv.cfg
+
+# Python bytecode / cache
+__pycache__/
+*.pyc
+
+# Training runs, logs, and checkpoints
+checkpoints/
+logs/
+tb_logs/
+
+# Large media outputs
+*.mp4
+
+# Claude / AI config & documentation
+.claude/
+CLAUDE.md
