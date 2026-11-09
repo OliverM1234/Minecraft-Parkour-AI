@@ -1,0 +1,25 @@
+--- com/microsoft/Malmo/Client/ClientStateMachine.java
++++ com/microsoft/Malmo/Client/ClientStateMachine.java
+@@ -1912,7 +1912,9 @@
+             Minecraft.getMinecraft().gameSettings.gammaSetting = (float) 2.0;
+             
+             if (missionBehaviour.lowLevelInputs) {
+-                Minecraft.getMinecraft().gameSettings.hideGUI = false;
++                // PATCHED (Minecraft parkour project): optional HUD-free capture
++                Minecraft.getMinecraft().gameSettings.hideGUI = "1".equals(System.getenv("MINEDOJO_HIDE_GUI"));
++                Minecraft.getMinecraft().gameSettings.thirdPersonView = "1".equals(System.getenv("MINEDOJO_THIRD_PERSON")) ? 1 : 0;
+                 Minecraft.getMinecraft().gameSettings.guiScale = 2;
+                 Minecraft.getMinecraft().gameSettings.fancyGraphics = true;
+             } else {
+--- com/microsoft/Malmo/MissionHandlers/VideoProducerImplementation.java
++++ com/microsoft/Malmo/MissionHandlers/VideoProducerImplementation.java
+@@ -182,7 +182,8 @@
+         if (this.videoParams.isWantDepth())
+             this.depthBuffer = BufferUtils.createFloatBuffer(this.videoParams.getWidth() * this.videoParams.getHeight());
+         // Set the requested camera position
+-        Minecraft.getMinecraft().gameSettings.thirdPersonView = this.videoParams.getViewpoint();
++        // PATCHED (Minecraft parkour project): optional third-person capture for demo replays
++        Minecraft.getMinecraft().gameSettings.thirdPersonView = "1".equals(System.getenv("MINEDOJO_THIRD_PERSON")) ? 1 : this.videoParams.getViewpoint();
+     }
+ 
+     @Override

@@ -13,9 +13,12 @@ __pycache__/
 checkpoints/
 logs/
 tb_logs/
+archive/
+runs/
 
 # Large media outputs
 *.mp4
+media/deck_fig_*
 
 # Claude / AI config & documentation
 .claude/
