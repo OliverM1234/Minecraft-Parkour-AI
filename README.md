@@ -24,7 +24,27 @@ Measured in the real game (Minecraft 1.11.2), with failures included.
 
 ## Why the first version failed
 
-The first attempt was a standard recipe: a CNN trained with PPO, directly in the game. It cleared the first gap, then fell at the next one, on all 20 test attempts. The obvious guess was "not enough training", but measuring it showed three specific problems:
+The first attempt was a standard recipe: a CNN trained with PPO, directly in the game. MineDojo turned Minecraft into a Python environment, and a stack of gym wrappers sat on top of it (`train_parkour.py`). Each wrapper is a thin layer that changes one thing:
+
+| Wrapper | What it did |
+|---|---|
+| Actions | 5 key combinations, such as forward + jump + sprint |
+| Reward | Points for getting closer to the next platform, +10 per landing, −100 for a fall, which ends the attempt |
+| Action repeat | Each choice held for 4 ticks, so 5 decisions a second |
+| Image | Grayscale, 64 × 64 |
+| Time limit and logging | 200 decisions per attempt, results recorded |
+
+Because it ran on a laptop without a GPU, every choice was made to keep it cheap:
+
+| Choice | Why |
+|---|---|
+| Game drawn at 64 × 64, with the fastest resizing | Less for the game to draw and the network to read |
+| Grayscale, one frame at a time | The smallest possible input |
+| A decision every 4 ticks | Fewer network calls and training steps |
+| Each attempt ends at the first fall | No time wasted falling to the floor |
+| One game, one PyTorch thread | Two games fought over the same CPU cores and ran slower |
+
+It cleared the first gap, then fell at the next one, on all 20 test attempts. The obvious guess was "not enough training", but measuring it showed three specific problems:
 
 | Problem | Measured |
 |---|---|
@@ -35,6 +55,8 @@ The first attempt was a standard recipe: a CNN trained with PPO, directly in the
 <img src="media/old_cnn_view.png" alt="The first version's 64 by 64 input, mostly covered by health hearts, hunger icons and the item bar" width="320">
 
 *What the first version's network actually received, enlarged.*
+
+The image savings were in the wrong place. Because it fell every few seconds, restarts dominated, and an average training step took about 1.5 s.
 
 ## How the rebuild works
 
@@ -49,6 +71,35 @@ flowchart LR
     D -- "keys" --> E
 ```
 
+### Where the speed came from
+
+| Change | First version | Rebuild |
+|---|---|---|
+| Restart after a fall | `env.reset()` rebuilds the world: about 15 s | Teleport inside the running game: 0.04 s |
+| Game tick | 50 ms in normal play | About 13 ms: nothing waits for real time, so the game runs nearly 4 times faster |
+| Practice | Every step in the real game, under 1 step a second | The teacher practises in a NumPy simulator running 512 courses as one set of arrays: about 20,000 steps a second |
+| Environment code | A stack of gym wrappers, one game at a time | One class each for the real game (`RealGame`) and the simulator (`TeacherVecEnv`), which steps all 512 courses together and checks every tick for a fall |
+
+A fall still ends an attempt at once, as it did before. What changed is that starting the next attempt is now almost free.
+
+### Spending the time saved on a better view
+
+With practice now cheap, the network can be given far more information per decision. The input stays at 64 × 64, so it still decides in about 2 ms on a CPU and the 178,518 training frames fit in about 2 GB.
+
+| What the network gets | First version | Rebuild |
+|---|---|---|
+| Colour | Grayscale | Full colour |
+| Frames | 1 | The last 4, so it can see motion |
+| Image | Drawn at 64 × 64 | Drawn at 128, averaged down to 64 × 64 |
+| Decisions | 5 a second | 10 a second |
+| Status bars | Covered most of the view | Hidden |
+| Feedback | Reward only | The teacher's choice for every frame |
+| Numbers per decision | 4,096 | 49,152, 12 times more |
+
+![One recorded run shown three ways: the full game view, the first version's grayscale input at 5 frames a second, and the rebuilt agent's colour input with 4 stacked frames at 10 a second](media/view_compare.gif)
+
+*Left: the game. Middle: the first version's input, rebuilt from the same frames, with the status bars hidden here so only the extra data differs. Right: the rebuilt agent's actual input. In grayscale the red blocks almost disappear into the floor. Made with `scripts/view_compare.py`.*
+
 ### 1. A simulator that matches the game
 
 `parkour/sim.py` reproduces Minecraft's movement physics tick by tick in batched NumPy. Checked against 16 recorded runs from the real game (641 ticks), the largest position error is 0.0004 blocks. It runs about 20,000 steps a second, against under 1 in the first version's training loop.
@@ -57,13 +108,23 @@ flowchart LR
 
 ### 2. A teacher that learns in the simulator
 
-The teacher is a PPO policy (Stable-Baselines3, 512 parallel simulated runs) that reads 33 numbers describing the next platforms and its own motion. Course difficulty rises as it improves. The final teacher trained for 40 million steps in 48 minutes on a laptop CPU.
+The teacher is a PPO policy (Stable-Baselines3, 512 parallel simulated runs). It sees no image, only 33 numbers:
+
+| Part | Details |
+|---|---|
+| Input | For each of the next 4 platforms: distance ahead, distance to the side, height difference, width, depth and whether it exists (24). Its own velocity (3) and whether it is on the ground (1). Its last action and heading (5), set to zero in the final teacher because a camera can't see them. |
+| Network | An actor that chooses the action and a critic that predicts how well the attempt will go, each 2 layers of 256 units, about 150,000 weights in total. PPO uses the critic's prediction to judge whether an action turned out better or worse than expected. |
+| Output, every 0.1 s | Forward (yes or no), jump (yes or no) and turn: one of 7 rates from 20° left to 20° right |
+| Reward | +1 for each new platform, +2 for finishing, −1 for a fall (which ends the attempt), −0.002 per step |
+| Training | 65,536 steps per update. Courses get harder as it improves. The final teacher also gets delays of up to 2 ticks, noisy inputs and a penalty for jerky turns. |
+
+The final teacher trained for 40 million steps in 48 minutes on a laptop CPU.
 
 ![Courses finished during training for both teachers](media/fig_teacher.png)
 
 ### 3. A student that learns from real frames
 
-The student is a CNN of about 1 million weights that takes four stacked 64 × 64 RGB frames and takes about 2 ms per decision on a CPU. It has three action outputs (forward, jump, turn) and a helper output that predicts platform positions and velocity from the image.
+The student is a CNN of about 1 million weights that takes four stacked 64 × 64 RGB frames and takes about 2 ms per decision on a CPU. It has four convolution layers (32, 64, 64 and 128 filters), each halving the image, then two ordinary layers of 384 and 256 units. It has three action outputs (forward, jump, turn) and a helper output that predicts 28 of the teacher's numbers (platform positions, its speed, whether it is on the ground), which pushes it to learn what to look for.
 
 It trains with [DAgger](https://arxiv.org/abs/1011.0686): the student plays the real game while the teacher labels the correct action for every frame, so the student also learns how to recover from its own mistakes. The final dataset has 178,518 real game frames. Restarts use a teleport inside the running game, which takes 0.04 s rather than 15 s.
 
