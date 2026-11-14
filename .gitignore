@@ -19,7 +19,3 @@ runs/
 # Large media outputs
 *.mp4
 media/deck_fig_*
-
-# Claude / AI config & documentation
-.claude/
-CLAUDE.md

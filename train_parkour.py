@@ -28,7 +28,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 # PyTorch's default intra-op parallelism spawns threads across every logical
 # core for each forward/backward pass. On this small a CNN policy the thread
 # synchronization overhead isn't worth it, and it directly competes with the
-# Minecraft JVM(s) for CPU - the same contention CLAUDE.md's --n-envs
+# Minecraft JVM(s) for CPU - the same contention the --n-envs
 # measurement found. Applies to watch_parkour.py's inference too, since it
 # imports this module.
 torch.set_num_threads(1)
@@ -347,7 +347,7 @@ if __name__ == "__main__":
         help="Number of parallel Minecraft instances. 1 uses DummyVecEnv (in-process); "
         ">1 uses SubprocVecEnv. Measured: 2 instances contend for CPU on this "
         "hardware rather than running truly in parallel - no throughput win, "
-        "default is 1. See CLAUDE.md for the measured comparison.",
+        "default is 1.",
     )
     args = parser.parse_args()
 
